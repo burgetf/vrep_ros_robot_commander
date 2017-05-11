@@ -1,0 +1,2 @@
+vrep_common.msg/DetectedObjInf detObjInf
+std_msgs/Float32MultiArray jointValues

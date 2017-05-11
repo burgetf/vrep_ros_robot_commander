@@ -1,0 +1,7 @@
+<launch>
+	<!-- <include file="$(find kuka_manager)/launch/iiwa_manager.launch"/> -->
+	<include file="$(find openni2_launch)/launch/openni2.launch"/>
+	<include file="$(vrep_robot_commander)/launch/display.launch"/>
+	<node name="ball_detector" pkg="object_detection" type="ball_detector.py" />
+	<node name="ball_tracker" pkg="vrep_robot_commander" type="ibvs_ball_tracker.py" output="screen" />
+</launch>

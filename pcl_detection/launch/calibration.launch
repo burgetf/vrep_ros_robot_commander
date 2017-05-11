@@ -1,0 +1,7 @@
+<launch>
+	<!-- <include file="$(find kuka_manager)/launch/iiwa_manager.launch"/> -->
+	<include file="$(find openni2_launch)/launch/openni2.launch"/>
+	<include file="$(find aruco_ros)/launch/double.launch"/>
+	<node name="avg_pub_node" pkg="pcl_detection" type="average_double_markers.py"/>
+	<node name="calib_node" pkg="pcl_detection" type="hand_eye_calibration.py" output="screen"/>
+</launch>

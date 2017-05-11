@@ -1,0 +1,7 @@
+<launch>
+	<!-- <include file="$(find kuka_manager)/launch/iiwa_manager.launch"/> -->
+	<include file="$(find openni2_launch)/launch/openni2.launch"/>
+	<include file="$(find vrep_robot_commander)/launch/display.launch"/>
+	<node name="cylinder_detector" pkg="pcl_detection" type="cylinder_color_detection"/>
+	<node name="cylinder_tracker" pkg="vrep_robot_commander" type="pbvs_cylinder_tracker.py" output="screen" />
+</launch>

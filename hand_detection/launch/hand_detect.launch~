@@ -1,0 +1,3 @@
+<launch>
+	<node name="hand_detector" pkg="hand_detection" type="kinect_convex_hull.py" output="screen" />
+</launch>

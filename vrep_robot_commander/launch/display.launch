@@ -1,0 +1,12 @@
+<launch>
+	<arg name="gui" default="False" />
+	<param name="robot_description" textfile="/home/davoud/kuka_ws/src/kuka/kuka/iiwa/iiwa_description/urdf/iiwa.urdf" />
+	<param name="use_gui" value="$(arg gui)"/>
+	<!-- <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" /> -->
+	<node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher" />
+	<node pkg="tf" type="static_transform_publisher" name="transform_ee_to_camera" args="0.0159 0.238 0.0345 -0.4619 -0.528 -0.4646 0.5395 /iiwa_adapter /camera_link 100" /> 
+	<node pkg="tf" type="static_transform_publisher" name="transform_ee_to_target" args="0.0 0.0 0.75 0.0 0.0 0.0 /iiwa_adapter /gripper 100" />
+	<node name="rviz" pkg="rviz" type="rviz" args="/home/davoud/catkin_ws/src/kuka/kuka/iiwa/iiwa_description/urdf/iiwa.rviz" required="true" />
+</launch>
+
+

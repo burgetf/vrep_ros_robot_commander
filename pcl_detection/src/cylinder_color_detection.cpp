@@ -1,0 +1,278 @@
+#include <ros/ros.h>
+#include <iostream>
+#include <math.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Float32MultiArray.h>
+#include <visualization_msgs/Marker.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/conditional_removal.h>
+#include <pcl/PCLPointCloud2.h>
+#include <pcl/conversions.h>
+#include <pcl/console/parse.h>
+#include <pcl_ros/transforms.h>
+#include <pcl/ModelCoefficients.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/common/common.h>
+#include <eigen3/Eigen/Dense>
+#include <bullet/LinearMath/btQuaternion.h>
+
+typedef pcl::PointXYZ PointT;
+typedef pcl::PointXYZRGB PointTRGB;
+
+class SubscribeAndPublish
+{
+public:
+  SubscribeAndPublish()
+  {
+    //publish the detected cylinder
+    cyl_pub_ = n_.advertise<std_msgs::Float32MultiArray>("/cylinder_coefs", 1);
+
+    //publish the point cloud of the detected cylinder
+    cyl_cloud_pub_ = n_.advertise<sensor_msgs::PointCloud2>("/cylinder_point_cloud", 1);
+
+    //publish the marker for the detected cylinder
+    cyl_marker_pub_ = n_.advertise<visualization_msgs::Marker>("/cylinder_marker", 1);
+
+    //subscribe to the point cloud from openni
+    pcloud_sub_ = n_.subscribe ("/camera/depth_registered/points", 1, &SubscribeAndPublish::cloud_callback, this);
+  }
+
+  void cloud_callback (const sensor_msgs::PointCloud2ConstPtr& cloud_msg){
+     pcl::PCLPointCloud2 pcl_pc2;
+     pcl_conversions::toPCL(*cloud_msg, pcl_pc2);
+     pcl::PointCloud<PointTRGB>::Ptr temp_cloud(new pcl::PointCloud<PointTRGB>);
+     pcl::fromPCLPointCloud2(pcl_pc2,*temp_cloud);
+     // ROS_INFO("The width of point cloud is %d ", temp_cloud->width);
+     // ROS_INFO("The height of point cloud is %d ", temp_cloud->height);
+     // std::cerr << "PointCloud has: " << temp_cloud->points.size () << " data points." << std::endl;
+     
+     // All the objects needed
+     pcl::PassThrough<PointTRGB> pass;
+     pcl::NormalEstimation<PointTRGB, pcl::Normal> ne;
+     pcl::SACSegmentationFromNormals<PointTRGB, pcl::Normal> seg; 
+     pcl::PCDWriter writer;
+     pcl::ExtractIndices<PointTRGB> extract;
+     pcl::ExtractIndices<pcl::Normal> extract_normals;
+     pcl::search::KdTree<PointTRGB>::Ptr tree (new pcl::search::KdTree<PointTRGB> ());
+     
+     // Datasets
+     pcl::PointCloud<PointTRGB>::Ptr cloud_filtered_color (new pcl::PointCloud<PointTRGB>);
+     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals_color (new pcl::PointCloud<pcl::Normal>);
+     pcl::PointCloud<PointTRGB>::Ptr cloud_filtered (new pcl::PointCloud<PointTRGB>);
+     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals (new pcl::PointCloud<pcl::Normal>);
+     pcl::PointCloud<PointTRGB>::Ptr cloud_filtered2 (new pcl::PointCloud<PointTRGB>);
+     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals2 (new pcl::PointCloud<pcl::Normal>);
+     pcl::ModelCoefficients::Ptr coefficients_plane (new pcl::ModelCoefficients), coefficients_cylinder (new pcl::ModelCoefficients);
+     pcl::PointIndices::Ptr inliers_plane (new pcl::PointIndices), inliers_cylinder (new pcl::PointIndices);
+
+     // build the condition using the color range for red
+     int rMax = 256;
+     int rMin = 150;
+     int gMax = 100;
+     int gMin = 0;
+     int bMax = 100;
+     int bMin = 0;
+     pcl::ConditionAnd<PointTRGB>::Ptr color_cond (new pcl::ConditionAnd<PointTRGB> ());
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("r", pcl::ComparisonOps::LT, rMax)));
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("r", pcl::ComparisonOps::GT, rMin)));
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("g", pcl::ComparisonOps::LT, gMax)));
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("g", pcl::ComparisonOps::GT, gMin)));
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("b", pcl::ComparisonOps::LT, bMax)));
+     color_cond->addComparison (pcl::PackedRGBComparison<PointTRGB>::Ptr (new pcl::PackedRGBComparison<PointTRGB> ("b", pcl::ComparisonOps::GT, bMin)));
+
+     // build the color filter
+     pcl::ConditionalRemoval<PointTRGB> condrem;
+     condrem.setCondition(color_cond);
+     condrem.setInputCloud (temp_cloud);
+     condrem.setKeepOrganized(false); 
+
+     // apply filter
+     condrem.filter (*cloud_filtered_color); 
+     // ROS_INFO("The width of point cloud after color_filtering is %d ", cloud_filtered_color->width);
+     // ROS_INFO("The height of point cloud after color_filtering is %d ", cloud_filtered_color->height);
+     // std::cerr << "PointCloud after color_filtering has: " << cloud_filtered_color->points.size () << " data points." << std::endl;
+
+     // Build a passthrough filter to remove spurious NaNs
+     pass.setInputCloud (cloud_filtered_color);
+     pass.setFilterFieldName ("z");
+     pass.setFilterLimits (0, 1.5);
+     pass.filter (*cloud_filtered);
+     // std::cerr << "PointCloud after filtering has: " << cloud_filtered->points.size () << " data points." << std::endl;
+
+
+     // Estimate point normals
+     ne.setSearchMethod (tree);
+     ne.setInputCloud (cloud_filtered);
+     ne.setKSearch (50);
+     ne.compute (*cloud_normals);
+
+     /*
+     // Create the segmentation object for the planar model and set all the parameters
+     seg.setOptimizeCoefficients (true);
+     seg.setModelType (pcl::SACMODEL_NORMAL_PLANE);
+     seg.setNormalDistanceWeight (0.1);
+     seg.setMethodType (pcl::SAC_RANSAC);
+     seg.setMaxIterations (100);
+     seg.setDistanceThreshold (0.03);
+     seg.setInputCloud (cloud_filtered);
+     seg.setInputNormals (cloud_normals);
+     // Obtain the plane inliers and coefficients
+     seg.segment (*inliers_plane, *coefficients_plane);
+     // std::cerr << "Plane coefficients: " << *coefficients_plane << std::endl;
+
+     // Extract the planar inliers from the input cloud
+     extract.setInputCloud (cloud_filtered);
+     extract.setIndices (inliers_plane);
+     extract.setNegative (false);
+ 
+     // Write the planar inliers to disk
+     pcl::PointCloud<PointTRGB>::Ptr cloud_plane (new pcl::PointCloud<PointTRGB> ());
+     extract.filter (*cloud_plane);
+     // std::cerr << "PointCloud representing the planar component: " << cloud_plane->points.size () << " data points." << std::endl;
+     // writer.write ("table_scene_mug_stereo_textured_plane.pcd", *cloud_plane, false);
+
+     // Remove the planar inliers, extract the rest
+     extract.setNegative (true);
+     extract.filter (*cloud_filtered2);
+     extract_normals.setNegative (true);
+     extract_normals.setInputCloud (cloud_normals);
+     extract_normals.setIndices (inliers_plane);
+     extract_normals.filter (*cloud_normals2); 
+     */
+
+     // Create the segmentation object for cylinder segmentation and set all the parameters
+     seg.setOptimizeCoefficients (true);
+     seg.setModelType (pcl::SACMODEL_CYLINDER);
+     seg.setMethodType (pcl::SAC_RANSAC);
+     seg.setNormalDistanceWeight (0.1);
+     seg.setMaxIterations (10000000);
+     seg.setDistanceThreshold (0.05);
+     seg.setRadiusLimits (0.02, 0.05);
+     seg.setInputCloud (cloud_filtered);
+     seg.setInputNormals (cloud_normals); 
+
+     // Obtain the cylinder inliers and coefficients
+     seg.segment (*inliers_cylinder, *coefficients_cylinder);
+     std::cerr << "Cylinder coefficients: " << *coefficients_cylinder << std::endl;
+
+     // Write the cylinder inliers to disk
+     extract.setInputCloud (cloud_filtered);
+     extract.setIndices (inliers_cylinder);
+     extract.setNegative (false);
+     pcl::PointCloud<PointTRGB>::Ptr cloud_cylinder (new pcl::PointCloud<PointTRGB> ());
+     extract.filter (*cloud_cylinder);
+
+     // publish pointcloud to ros
+     sensor_msgs::PointCloud2 rosCloud;
+     pcl::toROSMsg(*cloud_filtered_color, rosCloud);
+     cyl_cloud_pub_.publish(rosCloud);
+
+     // pcl::getMinMax
+     PointTRGB minPt, maxPt;
+     pcl::getMinMax3D (*cloud_cylinder, minPt, maxPt);
+     float height = maxPt.y - minPt.y;
+     // std::cout << "Max x: " << maxPt.x << std::endl;
+     // std::cout << "Max y: " << maxPt.y << std::endl;
+
+     if (cloud_cylinder->points.empty ()) 
+    	  std::cerr << "Can't find the cylindrical component." << std::endl;
+     else
+     {
+	  std::cerr << "PointCloud representing the cylindrical component: " << cloud_cylinder->points.size () << " data points." << std::endl;
+	  // writer.write ("table_scene_mug_stereo_textured_cylinder.pcd", *cloud_cylinder, false);
+	  std_msgs::Float32MultiArray msg_to_pub;
+
+
+
+
+          // set up dimensions
+	  msg_to_pub.layout.dim.push_back(std_msgs::MultiArrayDimension());
+          msg_to_pub.layout.dim[0].size = 8;
+          msg_to_pub.layout.dim[0].stride = 1;
+          msg_to_pub.layout.dim[0].label = "cylinder_coefs";
+
+
+	  float estimated_x = (maxPt.x + minPt.x) / 2.0;
+          float estimated_y = (maxPt.y + minPt.y) / 2.0;
+	  float estimated_z = (maxPt.z + minPt.z) / 2.0;
+          float estimated_rx = (*coefficients_cylinder).values[3];
+          float estimated_ry = (*coefficients_cylinder).values[4];
+          float estimated_rz = (*coefficients_cylinder).values[5];
+
+          if ((*coefficients_cylinder).values[4] < 0)
+          {
+            estimated_rx = -(*coefficients_cylinder).values[3];
+            estimated_ry = -(*coefficients_cylinder).values[4];
+            estimated_rz = -(*coefficients_cylinder).values[5];
+          }
+
+	  float estimated_radius = (*coefficients_cylinder).values[6];
+          msg_to_pub.data.clear();
+          msg_to_pub.data.push_back(estimated_x);
+          msg_to_pub.data.push_back(estimated_y);
+          msg_to_pub.data.push_back(estimated_z);
+          msg_to_pub.data.push_back(estimated_rx);
+          msg_to_pub.data.push_back(estimated_ry);
+          msg_to_pub.data.push_back(estimated_rz);
+          msg_to_pub.data.push_back(estimated_radius);
+          msg_to_pub.data.push_back(height);
+          cyl_pub_.publish(msg_to_pub);	
+
+	  // publish marker for visualization in rviz
+          Eigen::Vector3f orientation = Eigen::Vector3f(estimated_rx,
+                                                        estimated_ry,
+                                                        estimated_rz);
+          orientation.normalize(); 
+          btQuaternion quart;
+          quart.setEulerZYX(orientation[0],orientation[1],orientation[2]);
+          visualization_msgs::Marker marker;
+          marker.header.frame_id = "camera_rgb_optical_frame";
+          marker.id = 0;
+          marker.type = visualization_msgs::Marker::SPHERE;
+          marker.action = visualization_msgs::Marker::ADD;
+          marker.scale.x = 0.1;
+          marker.scale.y = 0.1;
+          marker.scale.z = 0.1;
+          marker.color.g = 0.0;
+          marker.color.r = 0.0;
+          marker.color.b = 1.0;
+          marker.color.a = 1.0;
+          marker.pose.orientation.x=quart.getX();
+          marker.pose.orientation.y=quart.getY();
+          marker.pose.orientation.z=quart.getZ();
+          marker.pose.orientation.w=quart.getW();
+          marker.pose.position.x = estimated_x;
+          marker.pose.position.y = estimated_y;
+          marker.pose.position.z = estimated_z;
+          marker.lifetime = ros::Duration(5);
+          marker.header.stamp = ros::Time::now();
+          cyl_marker_pub_.publish(marker);
+          std::cerr << "here are the quaternion values:" << quart.getX() << " , " << quart.getY() << " , " << quart.getZ() << " , " << quart.getW();
+     }		
+}
+
+private:
+  ros::NodeHandle n_; 
+  ros::Publisher cyl_pub_;
+  ros::Publisher cyl_cloud_pub_;
+  ros::Publisher cyl_marker_pub_;
+  ros::Subscriber pcloud_sub_;
+
+};//End of class SubscribeAndPublish
+
+
+
+int main (int argc, char** argv) {
+     ros::init (argc, argv, "cloud_sub");
+     //Create an object of class to publish cylinder coefficients
+     SubscribeAndPublish SAPObject;
+     ros::spin();
+ }

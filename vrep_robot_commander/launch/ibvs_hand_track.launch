@@ -1,0 +1,7 @@
+<launch>
+	<!-- <include file="$(find kuka_manager)/launch/iiwa_manager.launch"/> -->
+	<include file="$(find openni2_launch)/launch/openni2.launch"/>
+	<include file="$(find vrep_robot_commander)/launch/display.launch"/>
+	<node name="hand_detector" pkg="hand_detection" type="final_depth_color_hand_detector.py" />
+	<node name="hand_tracker" pkg="vrep_robot_commander" type="ibvs_hand_tracker.py" output="screen" />
+</launch>
